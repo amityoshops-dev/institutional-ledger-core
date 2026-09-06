@@ -1,0 +1,11 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+redis>=5.0.8
+asyncpg>=0.29.0
+pydantic>=2.8.0
+defusedxml>=0.7.1
+opentelemetry-api>=1.26.0
+opentelemetry-sdk>=1.26.0
+opentelemetry-instrumentation-fastapi>=0.47b0
+structlog>=24.4.0
+python-dotenv>=1.0.0
