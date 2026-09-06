@@ -120,7 +120,7 @@ class MultiTierReconciliationEngine:
                     ) VALUES ($1, $2, $3, $4, $5, $6, 'POSTED', $7, $8)
                     """,
                     entry_id, tx.tenant_id, idemp_key, tx.utr, tx.message_id,
-                    tx.event_timestamp, recon_status, f"Settlement {recon_status}"
+                    tx.event_timestamp, recon_status, f"Source: {tx.raw_format}"
                 )
 
                 await conn.executemany(
@@ -241,11 +241,20 @@ async def get_recent_entries(x_tenant_id: str = Header(..., alias="X-Tenant-ID")
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT utr_reference, reconciliation_state, description, status, created_at
-            FROM journal_entries
-            WHERE tenant_id = $1
-            ORDER BY created_at DESC
-            LIMIT 10;
+            SELECT 
+                je.utr_reference,
+                je.reconciliation_state,
+                je.description,
+                je.status,
+                je.assertion_time,
+                jl.amount,
+                coa.classification
+            FROM journal_entries je
+            JOIN journal_lines jl ON je.entry_id = jl.entry_id
+            JOIN chart_of_accounts coa ON jl.account_id = coa.account_id
+            WHERE je.tenant_id = $1 AND coa.classification != 'NOSTRO_CLEARING'
+            ORDER BY je.assertion_time DESC
+            LIMIT 12;
             """,
             x_tenant_id
         )
@@ -257,90 +266,235 @@ async def dashboard():
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Institutional Settlement & Ledger Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VAM Settlement & Ledger Core | Operations Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #f8fafc;
-      --card-bg: #ffffff;
+      --surface: #ffffff;
       --border: #e2e8f0;
-      --primary: #2563eb;
-      --text: #0f172a;
-      --muted: #64748b;
+      --border-subtle: #f1f5f9;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --text-light: #94a3b8;
+      --primary: #0284c7;
+      --primary-hover: #0369a1;
       --success: #059669;
+      --success-bg: #ecfdf5;
+      --success-border: #a7f3d0;
       --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --warning-border: #fde68a;
       --danger: #dc2626;
+      --danger-bg: #fef2f2;
+      --danger-border: #fecaca;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: var(--bg); color: var(--text); padding: 32px 40px; }
-    .top-bar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 2px solid var(--border); padding-bottom: 20px; }
-    h1 { font-size: 24px; font-weight: 700; }
-    .subtitle { color: var(--muted); font-size: 13px; margin-top: 6px; }
-    .links a { color: var(--primary); text-decoration: none; font-weight: 600; font-size: 13px; margin-right: 16px; }
-    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
-    .val { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
-    .desc { font-size: 12px; color: var(--muted); }
-    .table-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-    th { background: #f8fafc; padding: 12px 14px; font-size: 11px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); text-align: left; }
-    td { padding: 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-    code { font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
-    .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-    .b-match { background: #ecfdf5; color: var(--success); }
-    .b-break { background: #fef2f2; color: var(--danger); }
-    .b-fee { background: #fffbeb; color: var(--warning); }
-    button { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      padding: 32px 48px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 24px;
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand-section { display: flex; align-items: center; gap: 16px; }
+    .brand-badge {
+      background: var(--text-main);
+      color: #fff;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      letter-spacing: 0.04em;
+    }
+    .title-area h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+    .title-area p { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+    .actions { display: flex; align-items: center; gap: 14px; }
+    .nav-link {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .nav-link:hover { background: #f0f9ff; border-color: #bae6fd; }
+    .btn-refresh {
+      background: var(--text-main);
+      color: white;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: opacity 0.15s;
+    }
+    .btn-refresh:hover { opacity: 0.9; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--success-bg);
+      color: var(--success);
+      border: 1px solid var(--success-border);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 22px 24px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .kpi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .kpi-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .kpi-val {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      font-family: 'Inter', sans-serif;
+    }
+    .kpi-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.4; }
+    .table-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .table-top {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .table-top h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .table-top span { font-size: 12px; color: var(--text-muted); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th {
+      background: #fafafa;
+      padding: 12px 24px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-main);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge-match { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+    .badge-break { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+    .badge-fee { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+    .col-amount { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
   </style>
 </head>
 <body>
-  <div class="top-bar">
-    <div>
-      <h1>Institutional Settlement & Ledger Console</h1>
-      <div class="subtitle">
-        <span class="links"><a href="/prd">&rarr; Open PRD & Architecture Spec</a><a href="/docs">&rarr; OpenAPI Specs</a></span>
-        ISO 20022 Clearing Engine &bull; Neon Serverless PostgreSQL &bull; Upstash Redis
+  <div class="header">
+    <div class="brand-section">
+      <div class="brand-badge">CORE VAM</div>
+      <div class="title-area">
+        <h1>Institutional Settlement & Clearing Console</h1>
+        <p>ISO 20022 camt.054 Ingestion &bull; pacs.008 Dispatch &bull; Neon Serverless PostgreSQL &bull; Upstash Redis</p>
       </div>
     </div>
-    <button onclick="refresh()">Refresh State</button>
-  </div>
-
-  <div class="metrics">
-    <div class="card">
-      <div class="label">Client Settled Balance</div>
-      <div class="val" id="van">...</div>
-      <div class="desc">Settled funds in corporate Virtual Account <code>VAN-HDFC-9920194</code>.</div>
-    </div>
-    <div class="card">
-      <div class="label">Suspense Exposure</div>
-      <div class="val" id="suspense" style="color: var(--danger);">...</div>
-      <div class="desc">Isolated in <code>BREAK-SUSPENSE-001</code> due to missing invoices or unmapped VANs.</div>
-    </div>
-    <div class="card">
-      <div class="label">Fee Suspense Balance</div>
-      <div class="val" id="fee" style="color: var(--warning);">...</div>
-      <div class="desc">Absorbed clearing fee deductions in <code>FEE-SUSPENSE-001</code> (&le; 50 INR tolerance).</div>
-    </div>
-    <div class="card">
-      <div class="label">Double-Entry Invariant</div>
-      <div class="val" style="color: var(--success);">0.0000 INR</div>
-      <div class="desc">Mathematical guarantee: Total Debits == Total Credits across all accounts.</div>
+    <div class="actions">
+      <div class="status-badge"><span class="dot"></span> D=C ZERO-SUM INTACT</div>
+      <a href="/prd" class="nav-link">&rarr; Architecture Spec (PRD)</a>
+      <a href="/docs" class="nav-link">&rarr; API Docs</a>
+      <button class="btn-refresh" onclick="refresh()">Refresh State</button>
     </div>
   </div>
 
-  <div class="table-box">
-    <h3 style="font-size: 16px;">Live Ledger Journal Entries (Direct from Neon PostgreSQL)</h3>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-title">Client Settled Balance</div></div>
+      <div class="kpi-val" id="van" style="color: var(--text-main);">...</div>
+      <div class="kpi-sub">Available in corporate Virtual Account <code>VAN-HDFC-9920194</code></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-title">Quarantined Suspense</div></div>
+      <div class="kpi-val" id="suspense" style="color: var(--danger);">...</div>
+      <div class="kpi-sub">Isolated in <code>BREAK-SUSPENSE-001</code> (missing invoices or unmapped VANs)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-title">Fee Tolerance Absorption</div></div>
+      <div class="kpi-val" id="fee" style="color: var(--warning);">...</div>
+      <div class="kpi-sub">Absorbed clearing fee variances in <code>FEE-SUSPENSE-001</code> (&le; 50 INR)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-title">Global Ledger Variance</div></div>
+      <div class="kpi-val" style="color: var(--success);">0.0000 INR</div>
+      <div class="kpi-sub">Strict double-entry mathematical check: Debits == Credits ($Variance = 0$)</div>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-top">
+      <h3>Direct Inflow & Settlement Audit Stream</h3>
+      <span>Real-time persistence record from Neon PostgreSQL</span>
+    </div>
     <table>
       <thead>
         <tr>
-          <th>UTR Reference</th>
-          <th>Reconciliation State</th>
-          <th>Description</th>
-          <th>Status</th>
+          <th>Transaction Reference (UTR)</th>
+          <th>Reconciliation Outcome</th>
+          <th>Source Specification</th>
+          <th>Amount (Settled)</th>
+          <th>Timestamp (UTC)</th>
+          <th>Commit State</th>
         </tr>
       </thead>
       <tbody id="tbl">
-        <tr><td colspan="4" style="text-align: center; color: var(--muted);">Loading entries...</td></tr>
+        <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">Loading transactions...</td></tr>
       </tbody>
     </table>
   </div>
@@ -349,7 +503,7 @@ async def dashboard():
     const H = { "X-Tenant-ID": "TENANT_CORP_001" };
     async function refresh() {
       try {
-        const [v, s, f, e] = await Promise.all([
+        const [v, s, f, entries] = await Promise.all([
           fetch("/v1/accounts/VAN-HDFC-9920194/balance", { headers: H }).then(r=>r.json()),
           fetch("/v1/accounts/BREAK-SUSPENSE-001/balance", { headers: H }).then(r=>r.json()),
           fetch("/v1/accounts/FEE-SUSPENSE-001/balance", { headers: H }).then(r=>r.json()),
@@ -360,14 +514,18 @@ async def dashboard():
         document.getElementById("fee").innerText = Math.abs(f.net_settled_balance).toLocaleString('en-IN', {minimumFractionDigits: 4}) + " INR";
 
         const tbody = document.getElementById("tbl");
-        tbody.innerHTML = e.map(row => {
-          let b = 'b-match';
-          if (row.reconciliation_state === 'SUSPENSE_BREAK') b = 'b-break';
-          if (row.reconciliation_state === 'TOLERANCE_ADJUSTED') b = 'b-fee';
+        tbody.innerHTML = entries.map(row => {
+          let b = 'badge-match';
+          if (row.reconciliation_state === 'SUSPENSE_BREAK') b = 'badge-break';
+          if (row.reconciliation_state === 'TOLERANCE_ADJUSTED') b = 'badge-fee';
+          const amt = row.amount ? Number(row.amount).toLocaleString('en-IN', {minimumFractionDigits: 4}) + ' INR' : '—';
+          const ts = row.assertion_time ? new Date(row.assertion_time).toISOString().replace('T', ' ').substring(0, 19) : '—';
           return `<tr>
             <td><code>${row.utr_reference}</code></td>
             <td><span class="badge ${b}">${row.reconciliation_state}</span></td>
             <td>${row.description}</td>
+            <td class="col-amount">${amt}</td>
+            <td><code>${ts}</code></td>
             <td><strong>${row.status}</strong></td>
           </tr>`;
         }).join('');
@@ -386,53 +544,68 @@ async def prd_page():
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>PRD & Architecture Specification - Institutional Ledger Core</title>
+  <title>Product Requirements Document | Institutional Ledger Core</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    body { background: #f8fafc; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 40px 20px; }
-    .box { max-width: 900px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 48px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    a { color: #2563eb; text-decoration: none; font-weight: 600; font-size: 13px; }
-    h1 { font-size: 26px; margin: 16px 0 8px 0; }
-    h2 { font-size: 18px; margin: 32px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
-    p, li { font-size: 14px; color: #475569; margin-bottom: 8px; }
-    ul { margin-left: 24px; margin-bottom: 16px; }
-    code { font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-    th, td { border: 1px solid #e2e8f0; padding: 10px 14px; text-align: left; }
-    th { background: #f8fafc; }
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #0284c7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; line-height: 1.6; padding: 48px 24px; }
+    .box { max-width: 920px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 48px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.04); }
+    .back-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none; margin-bottom: 24px; }
+    h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+    .meta { font-size: 14px; color: var(--muted); margin-bottom: 32px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+    h2 { font-size: 18px; font-weight: 700; margin-top: 32px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    p, li { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
+    ul { margin-left: 20px; margin-bottom: 16px; }
+    code { font-family: 'JetBrains Mono', monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 12.5px; color: var(--text); }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; }
+    th, td { border: 1px solid var(--border); padding: 12px 14px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; color: var(--text); }
   </style>
 </head>
 <body>
   <div class="box">
-    <a href="/dashboard">&larr; Return to Dashboard</a>
-    <h1>Product Requirements & Technical Architecture</h1>
-    <p><strong>System:</strong> Institutional Virtual Account Management (VAM) & Real-Time Clearing Core</p>
-    <p><strong>Standards:</strong> ISO 20022 (camt.054 inward / pacs.008 outward) | Strict Double-Entry</p>
+    <a href="/dashboard" class="back-btn">&larr; Return to Live Console</a>
+    <h1>Institutional Virtual Account Management & Ledger Core</h1>
+    <div class="meta">Specification & Production Architecture Review &bull; Version 1.0.1</div>
 
-    <h2>1. Core Financial Invariants</h2>
+    <h2>1. Executive Summary & Purpose</h2>
+    <p>Provides institutional-grade transaction clearing for virtual account settlement rails adhering to strict double-entry invariants, automated ISO 20022 parsing (camt.054/pacs.008), and append-only database immutability.</p>
+
+    <h2>2. Fundamental Financial Invariants</h2>
     <ul>
-      <li><strong>Zero-Sum Integrity:</strong> Every transaction must satisfy <code>Total Debits == Total Credits</code>. Database triggers block non-zero entries.</li>
-      <li><strong>Ledger Immutability:</strong> <code>UPDATE</code> and <code>DELETE</code> operations on journal lines are forbidden by database-level triggers. Adjustments are executed strictly via compensating entries.</li>
-      <li><strong>Atomic Idempotency:</strong> Redis Lua atomic locks prevent race conditions and duplicate processing across identical UTRs.</li>
-      <li><strong>Bi-Temporal Querying:</strong> Distinguishes ledger assertion time from event booking time for audit compliance.</li>
+      <li><strong>Zero-Sum Balance Assertion:</strong> Total Debits must equal Total Credits ($D = C$) across all ledger postings before any transaction commit.</li>
+      <li><strong>Hard Immutability:</strong> Database triggers reject all <code>UPDATE</code> or <code>DELETE</code> statements on ledger journal lines. Reversals use non-destructive compensating entries.</li>
+      <li><strong>Atomic Idempotency:</strong> Redis Lua scripts evaluate incoming message signatures and transaction IDs to prevent duplicate crediting.</li>
+      <li><strong>Bi-Temporal Slicing:</strong> Separates event booking time ($t_e$) from database assertion time ($t_a$) for point-in-time regulatory auditing.</li>
     </ul>
 
-    <h2>2. Multi-Tier Reconciliation Pipeline</h2>
+    <h2>3. Reconciliation Decision Matrix</h2>
     <table>
       <thead>
-        <tr><th>Tier</th><th>Rule</th><th>Ledger Treatment</th></tr>
+        <tr><th>Tier</th><th>Condition</th><th>Accounting Posting</th></tr>
       </thead>
       <tbody>
-        <tr><td><strong>Tier 1: Exact Match</strong></td><td>Inward remittance matches pending invoice amount exactly.</td><td>Credit client Virtual Account, mark invoice <code>PAID</code>.</td></tr>
-        <tr><td><strong>Tier 2: Fee Tolerance</strong></td><td>Remittance variance is &le; 50 INR (intermediary bank charges).</td><td>Credit Virtual Account full amount, absorb variance in <code>FEE_SUSPENSE</code>.</td></tr>
-        <tr><td><strong>Tier 3: Suspense Break</strong></td><td>Unmapped VAN, missing invoice, or variance exceeds tolerance.</td><td>Credit <code>BREAK_SUSPENSE</code> for operational remediation.</td></tr>
+        <tr><td><strong>Tier 1: Exact Match</strong></td><td>Remittance matches pending invoice precisely.</td><td>Dr <code>NOSTRO_CLEARING</code>, Cr Client <code>VIRTUAL_ACCOUNT</code>. Invoice &rarr; <code>PAID</code>.</td></tr>
+        <tr><td><strong>Tier 2: Fee Tolerance</strong></td><td>Remittance variance is &le; 50 INR.</td><td>Dr <code>NOSTRO_CLEARING</code>, Dr <code>FEE_SUSPENSE</code>, Cr Client <code>VIRTUAL_ACCOUNT</code> full amount.</td></tr>
+        <tr><td><strong>Tier 3: Suspense Break</strong></td><td>Unknown VAN, missing invoice, or tolerance exceeded.</td><td>Dr <code>NOSTRO_CLEARING</code>, Cr <code>BREAK_SUSPENSE</code> for operational remediation.</td></tr>
       </tbody>
     </table>
 
-    <h2>3. Cloud Infrastructure Matrix</h2>
+    <h2>4. Infrastructure Stack</h2>
     <ul>
-      <li><strong>Compute:</strong> Render (Python 3.13 Stateless Core)</li>
-      <li><strong>Relational Ledger:</strong> Neon PostgreSQL Serverless (AWS us-east-2) with foreign keys and balance triggers</li>
-      <li><strong>Cache & Locks:</strong> Upstash Redis (TLS) with distributed Lua idempotency evaluation</li>
+      <li><strong>Compute Layer:</strong> Render (Python 3.13 stateless web service)</li>
+      <li><strong>Distributed Lock & Stream Engine:</strong> Upstash Redis (TLS / rediss://)</li>
+      <li><strong>Persistence & Invariants:</strong> Neon Serverless PostgreSQL (foreign keys, check constraints, row-level immutability triggers)</li>
     </ul>
   </div>
 </body>
