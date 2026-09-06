@@ -753,7 +753,7 @@ async def serve_dashboard():
   <div class="top-bar">
     <div>
       <h1>Institutional Settlement & Ledger Console</h1>
-      <div class="subtitle">ISO 20022 camt.054 / pacs.008 Core Engine &bull; Neon Serverless PostgreSQL &bull; Upstash Redis</div>
+      <div class="subtitle"><a href="/prd" style="color: var(--primary); font-weight: 600; text-decoration: none; margin-right: 8px;">&rarr; View PRD & Architecture Spec</a> | ISO 20022 camt.054 / pacs.008 Core Engine &bull; Neon Serverless PostgreSQL &bull; Upstash Redis</div>
     </div>
     <div style="display: flex; gap: 12px; align-items: center;">
       <div class="status-pill"><span class="status-dot"></span> ZERO-SUM LEDGER VERIFIED</div>
@@ -864,3 +864,141 @@ async def get_recent_entries(x_tenant_id: str = Header(..., alias="X-Tenant-ID")
             x_tenant_id
         )
         return [dict(r) for r in rows]
+
+@app.get("/prd", response_class=HTMLResponse)
+async def serve_prd():
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PRD & System Architecture Spec - Institutional Ledger Core</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --code-bg: #f1f5f9;
+      --success: #059669;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text-main); line-height: 1.65; padding: 40px 20px; }
+    .container { max-width: 960px; margin: 0 auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 48px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+    .nav-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .back-link { font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .back-link:hover { text-decoration: underline; }
+    .badge { font-size: 11px; font-weight: 700; background: #ecfdf5; color: var(--success); padding: 4px 10px; border-radius: 9999px; border: 1px solid #a7f3d0; text-transform: uppercase; }
+    h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; color: var(--text-main); }
+    .meta-subtitle { font-size: 14px; color: var(--text-muted); margin-bottom: 32px; }
+    h2 { font-size: 18px; font-weight: 700; margin-top: 36px; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 8px; color: var(--text-main); }
+    h3 { font-size: 15px; font-weight: 600; margin-top: 20px; margin-bottom: 8px; color: var(--text-main); }
+    p { margin-bottom: 14px; font-size: 14px; color: var(--text-muted); }
+    ul, ol { margin-left: 20px; margin-bottom: 16px; font-size: 14px; color: var(--text-muted); }
+    li { margin-bottom: 6px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: #0f172a; }
+    pre { background: #0f172a; color: #f8fafc; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 13.5px; }
+    th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; color: var(--text-main); }
+    td { color: var(--text-muted); }
+    .callout { background: #eff6ff; border-left: 4px solid var(--primary); padding: 14px 16px; border-radius: 0 8px 8px 0; margin-bottom: 20px; font-size: 13.5px; color: #1e3a8a; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav-bar">
+      <a href="/dashboard" class="back-link">&larr; Return to Operations Dashboard</a>
+      <span class="badge">Production PRD v1.0.1</span>
+    </div>
+
+    <h1>Product Requirements & Technical Specification</h1>
+    <div class="meta-subtitle">Institutional Virtual Account Management (VAM) & Real-Time Double-Entry Clearing Core</div>
+
+    <div class="callout">
+      <strong>Core Purpose:</strong> Provide institutional-grade settlement rails adhering to strict financial invariants, ISO 20022 message specifications, and immutable transaction auditability.
+    </div>
+
+    <h2>1. Executive Summary & Problem Definition</h2>
+    <p>Traditional transaction banking operations face high failure rates in automated clearing due to intermediary banking deductions, lack of idempotent webhook ingestion, and mutable ledger state corrupting audit trails. This system provides an institutional, distributed ledger engine guaranteeing zero-loss settlement processing.</p>
+
+    <h2>2. Strict Financial & Architectural Invariants</h2>
+    <ul>
+      <li><strong>Zero-Sum Balance Guarantee:</strong> For every settlement transaction, debits must strictly equal credits ($TotalDebits == TotalCredits$) before committing to persistence. Net system variance must equal <code>0.0000 INR</code> at all times.</li>
+      <li><strong>Append-Only Ledger Immutability:</strong> Database-level triggers prohibit all <code>UPDATE</code> and <code>DELETE</code> statements on <code>journal_lines</code>. Ledger corrections are executed strictly via balanced, non-destructive compensating entries.</li>
+      <li><strong>Bi-Temporal Data Modeling:</strong> Separates event booking time ($t_e$) from ledger assertion time ($t_a$), enabling deterministic point-in-time "as-of" balance reconstruction for regulatory audits.</li>
+      <li><strong>Atomic Idempotency:</strong> Redis-backed distributed locks and PostgreSQL unique constraints prevent double-crediting or duplicate webhook processing.</li>
+    </ul>
+
+    <h2>3. Automated Multi-Tier Reconciliation Hierarchy</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Condition</th>
+          <th>Ledger Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Tier 1: Exact Match</strong></td>
+          <td>Inward remittance matches pending invoice amount exactly.</td>
+          <td>Debit <code>NOSTRO_CLEARING</code>, Credit Client <code>VIRTUAL_ACCOUNT</code>. Invoice marked <code>PAID</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Tier 2: Fee Tolerance</strong></td>
+          <td>Remittance variance is within intermediary fee tolerance (&le; 50 INR).</td>
+          <td>Debit <code>NOSTRO_CLEARING</code>, Debit <code>FEE_SUSPENSE</code> for variance, Credit Client <code>VIRTUAL_ACCOUNT</code> full amount.</td>
+        </tr>
+        <tr>
+          <td><strong>Tier 3: Suspense Break</strong></td>
+          <td>Unknown VAN, missing invoice, or variance exceeds tolerance limit.</td>
+          <td>Debit <code>NOSTRO_CLEARING</code>, Credit <code>BREAK_SUSPENSE</code>. Quarantined for manual operations review.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4. Clearing Rails & ISO 20022 Compatibility</h2>
+    <ul>
+      <li><strong>Inward Clearing:</strong> Ingests batched multi-entry ISO 20022 <code>camt.054.001.08</code> Bank-to-Customer Debit/Credit Notifications signed via HMAC SHA-256 signatures.</li>
+      <li><strong>Outward Clearing:</strong> Executes pre-debit settled balance assertions before generating standard ISO 20022 <code>pacs.008.001.08</code> Financial Institutional Customer Credit Transfer files.</li>
+    </ul>
+
+    <h2>5. Infrastructure Stack</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Technology</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Compute & API</td>
+          <td>FastAPI (Python 3.13) / Render</td>
+          <td>Stateless web server, OpenAPI documentation, HMAC webhook ingress.</td>
+        </tr>
+        <tr>
+          <td>Distributed Cache</td>
+          <td>Upstash Redis (TLS)</td>
+          <td>Distributed locking, idempotency guard, real-time stream buffers.</td>
+        </tr>
+        <tr>
+          <td>Persistence</td>
+          <td>Neon Serverless PostgreSQL</td>
+          <td>Double-entry journal storage, foreign-key charts of accounts, deferred invariant triggers.</td>
+        </tr>
+        <tr>
+          <td>Observability</td>
+          <td>OpenTelemetry</td>
+          <td>Distributed transaction tracing, microsecond settlement timing.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
+"""
