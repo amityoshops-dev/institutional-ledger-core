@@ -690,3 +690,9 @@ async def serve_dashboard():
 </body>
 </html>
 """
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/dashboard")
